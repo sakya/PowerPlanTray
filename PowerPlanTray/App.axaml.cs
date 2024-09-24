@@ -1,12 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
-using Avalonia.Styling;
 using Avalonia.Threading;
 using PowerPlanTray.Controls;
 using PowerPlanTray.Models;
@@ -18,32 +17,45 @@ public class App : Application
 {
     public CancellationTokenSource CancellationTokenSource { get; } = new();
     private TrayIcon _trayIcon = null!;
-    private readonly PowerHelper.PowerState _powerState = new();
 
-    private List<PowerScheme>? _schemes;
-    private List<IdName>? _turboBoostValues;
+    private readonly Status _status = new Status();
 
-    private ThemeVariant? _lastTheme;
-    private Guid _lastActiveScheme = Guid.Empty;
-    private uint _lastTurboBoostIndex;
-    private string _lastIcon = string.Empty;
+    private PowerHelper.DeviceNotifyCallbackRoutine _registerNotification = null!;
 
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
-        DataContext = this;
     }
 
     public void Init()
     {
-        _lastTheme = ActualThemeVariant;
-        _trayIcon = new TrayIcon();
-        _lastIcon = "mdi-power-plug-battery-outline";
-        _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_lastIcon));
+        _registerNotification = OnSettingChange;
 
+        _status.Theme = ActualThemeVariant;
+        _status.TrayIcon = "mdi-power-plug-battery-outline";
+
+        _status.Schemes = PowerHelper.GetPowerSchemes();
+        _status.ActiveSchemeGuid = PowerHelper.GetActiveSchemeGuid();
+
+        _status.BoostModeValues = PowerHelper.GetPossibleValues(PowerHelper.GUID_PROCESSOR_SETTINGS_SUBGROUP, PowerHelper.GUID_BOOST_MODE_SETTING);
+        _status.BoostModeIndex = _status.ActiveScheme != null
+            ? PowerHelper.GetBoostModeIndex(_status.ActiveSchemeGuid, _status.PowerState.AcDc)
+            : 0;
+
+        _trayIcon = new TrayIcon();
+        _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
         _trayIcon.ToolTipText = "Power Plan Tray";
         _trayIcon.Menu = BuildMenu();
         TrayIcon.SetIcons(this, [_trayIcon]);
+
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ACDC_POWER_SOURCE, _registerNotification, out _))
+            Console.WriteLine("Error registering notification for GUID_ACDC_POWER_SOURCE");
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ENERGY_SAVER_STATUS, _registerNotification, out _))
+            Console.WriteLine("Error registering notification for GUID_ENERGY_SAVER_STATUS");
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_POWERSCHEME_PERSONALITY, _registerNotification, out _))
+            Console.WriteLine("Error registering notification for GUID_POWERSCHEME_PERSONALITY");
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_BOOST_MODE_SETTING, _registerNotification, out _))
+            Console.WriteLine("Error registering notification for GUID_BOOST_MODE_SETTING");
 
         DispatcherTimer.Run(() =>
         {
@@ -70,50 +82,40 @@ public class App : Application
     #region private operations
     private NativeMenu BuildMenu()
     {
-        var ps = new PowerHelper.PowerState();
-        PowerHelper.GetSystemPowerStatus(ps);
-
-        _schemes = PowerHelper.GetPowerSchemes();
-        var activeScheme = _schemes.FirstOrDefault(p => p.Active);
-        _lastActiveScheme = activeScheme?.Guid ?? Guid.Empty;
-
-        var turboBoostIndex = activeScheme != null
-            ? PowerHelper.GetTurboBoostIndex(activeScheme.Guid, ps.AcDc)
-            : 0;
-        _lastTurboBoostIndex = turboBoostIndex;
-
         var res = new NativeMenu();
-        foreach (var scheme in _schemes) {
-            var pmi = new CheckableMenuItem()
-            {
-                Header = scheme.FriendlyName,
-                ToolTip = scheme.Description,
-                IsChecked = scheme.Active,
-                Tag = scheme,
-            };
-            pmi.Click += OnSchemeClick;
-            res.Items.Add(pmi);
+        if (_status.Schemes != null) {
+            foreach (var scheme in _status.Schemes) {
+                var pmi = new CheckableMenuItem()
+                {
+                    Header = scheme.FriendlyName,
+                    ToolTip = scheme.Description,
+                    IsChecked = scheme.Active,
+                    Tag = scheme,
+                };
+                pmi.Click += OnSchemeClick;
+                res.Items.Add(pmi);
+            }
         }
+
         res.Items.Add(new NativeMenuItemSeparator());
         var cmi = new NativeMenuItemExtended()
         {
             Header = "Boost mode",
-            Tag = "TurboBoost"
+            Tag = "BoostMode"
         };
         res.Items.Add(cmi);
 
-        _turboBoostValues = PowerHelper.GetPossibleValues(PowerHelper.GUID_PROCESSOR_SETTINGS_SUBGROUP, PowerHelper.GUID_TURBO_BOOST_SETTING);
-        if (_turboBoostValues.Count > 0) {
+        if (_status.BoostModeValues?.Count > 0) {
             cmi.Menu = new NativeMenu();
-            foreach (var tbv in _turboBoostValues) {
+            foreach (var tbv in _status.BoostModeValues) {
                 var tbm = new CheckableMenuItem()
                 {
                     Header = tbv.FriendlyName,
                     ToolTip = tbv.Description,
                     Tag = tbv.Id,
-                    IsChecked = tbv.Id == turboBoostIndex
+                    IsChecked = tbv.Id == _status.BoostModeIndex
                 };
-                tbm.Click += OnTurboBoostClick;
+                tbm.Click += OnBoostModeClick;
                 cmi.Menu.Items.Add(tbm);
             }
         }
@@ -150,24 +152,22 @@ public class App : Application
         if (_trayIcon.Menu == null)
             return;
 
-        _schemes = PowerHelper.GetPowerSchemes();
-        foreach (var menuItem in _trayIcon.Menu.Items) {
-            if (menuItem is CheckableMenuItem { Tag: PowerScheme menuScheme } cmi) {
-                var scheme = _schemes.FirstOrDefault(p => p.Guid == menuScheme.Guid);
-                if (scheme != null) {
-                    cmi.IsChecked = scheme.Active;
-                }
+        _status.Schemes = PowerHelper.GetPowerSchemes();
+        foreach (var menuItem in _trayIcon.Menu.Items.OfType<CheckableMenuItem>()) {
+            if (menuItem.Tag is PowerScheme menuScheme) {
+                var scheme = _status.Schemes.FirstOrDefault(p => p.Guid == menuScheme.Guid);
+                menuItem.IsChecked = scheme?.Active ?? false;
             }
         }
     }
 
-    private void UpdateTurboBoostMenu(uint turboBoostIndex)
+    private void UpdateBoostModeMenu(uint boostModeIndex)
     {
         var mi = _trayIcon.Menu?.Items.OfType<NativeMenuItemExtended>()
-            .FirstOrDefault(m => m.Tag as string == "TurboBoost");
+            .FirstOrDefault(m => m.Tag as string == "BoostMode");
         if (mi?.Menu != null) {
             foreach (var menuItem in mi.Menu.Items.OfType<CheckableMenuItem>()) {
-                menuItem.IsChecked = menuItem.Tag is uint index && index == turboBoostIndex;
+                menuItem.IsChecked = menuItem.Tag is uint index && index == boostModeIndex;
             }
         }
     }
@@ -181,15 +181,12 @@ public class App : Application
         }
     }
 
-    private void OnTurboBoostClick(object? sender, EventArgs e)
+    private void OnBoostModeClick(object? sender, EventArgs e)
     {
         if (sender is CheckableMenuItem { Tag: uint index }) {
-            var ps = new PowerHelper.PowerState();
-            PowerHelper.GetSystemPowerStatus(ps);
-
             var schemeGuid = PowerHelper.GetActiveSchemeGuid();
-            if (PowerHelper.SetTurboBoostIndex(schemeGuid, ps.AcDc, index))
-                UpdateTurboBoostMenu(index);
+            if (PowerHelper.SetBoostModeIndex(schemeGuid, _status.PowerState.AcDc, index))
+                UpdateBoostModeMenu(index);
         }
     }
 
@@ -206,53 +203,63 @@ public class App : Application
     }
     #endregion
 
+    private uint OnSettingChange(IntPtr context, uint type, IntPtr setting)
+    {
+        var guid = Marshal.PtrToStructure<Guid>(setting);
+        if (guid == PowerHelper.GUID_ACDC_POWER_SOURCE || guid == PowerHelper.GUID_ENERGY_SAVER_STATUS) {
+            PowerHelper.GetSystemPowerStatus(_status.PowerState);
+        } else if (guid == PowerHelper.GUID_POWERSCHEME_PERSONALITY) {
+            var active = PowerHelper.GetActiveSchemeGuid();
+            if (active != _status.ActiveSchemeGuid) {
+                _status.ActiveSchemeGuid = active;
+                Dispatcher.UIThread.Invoke(UpdateSchemesMenu);
+            }
+        } else if (guid == PowerHelper.GUID_BOOST_MODE_SETTING) {
+            var active = PowerHelper.GetActiveSchemeGuid();
+            var boostModeIndex = PowerHelper.GetBoostModeIndex(active, _status.PowerState.AcDc);
+            if (_status.BoostModeIndex != boostModeIndex) {
+                _status.BoostModeIndex = boostModeIndex;
+                Dispatcher.UIThread.Invoke(() => UpdateBoostModeMenu(boostModeIndex));
+            }
+        }
+
+        return 0;
+    }
+
     private void OnTimer()
     {
         // Check the theme
-        if (_lastTheme != ActualThemeVariant) {
-            _lastTheme = ActualThemeVariant;
-            _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_lastIcon));
+        if (_status.Theme != ActualThemeVariant) {
+            // Change tray icon
+            _status.Theme = ActualThemeVariant;
+            if (!string.IsNullOrEmpty(_status.TrayIcon))
+                _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
             _trayIcon.Menu = BuildMenu();
             return;
         }
 
-        // Check the active scheme
-        var active = PowerHelper.GetActiveSchemeGuid();
-        if (active != _lastActiveScheme) {
-            _lastActiveScheme = active;
-            UpdateSchemesMenu();
-        }
-
-        // Check turbo boost index
-        PowerHelper.GetSystemPowerStatus(_powerState);
-
-        var turboBoostIndex = PowerHelper.GetTurboBoostIndex(active, _powerState.AcDc);
-        if (_lastTurboBoostIndex != turboBoostIndex) {
-            _lastTurboBoostIndex = turboBoostIndex;
-            UpdateTurboBoostMenu(turboBoostIndex);
-        }
-
         StringBuilder sb = new();
-        var activeScheme = _schemes?.FirstOrDefault(s => s.Guid == active);
+        var activeScheme = _status.ActiveScheme;
         if (activeScheme != null) {
             sb.AppendLine($"Scheme: {activeScheme.FriendlyName}");
         }
-        var tbName = _turboBoostValues?.FirstOrDefault(t => t.Id == turboBoostIndex);
+        var tbName = _status.BoostModeValues?.FirstOrDefault(t => t.Id == _status.BoostModeIndex);
         if (tbName != null) {
             sb.AppendLine($"Boost mode: {tbName.FriendlyName}");
         }
 
         // Battery icon
-        if (_powerState.BatteryFlag == PowerHelper.BatteryFlag.Unknown || (_powerState.BatteryFlag & PowerHelper.BatteryFlag.NoSystemBattery) == PowerHelper.BatteryFlag.NoSystemBattery) {
-            if (_lastIcon != "mdi-power-plug-battery-outline") {
-                _lastIcon = "mdi-power-plug-battery-outline";
-                _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_lastIcon));
+        if (_status.PowerState.BatteryFlag == PowerHelper.BatteryFlag.Unknown || (_status.PowerState.BatteryFlag & PowerHelper.BatteryFlag.NoSystemBattery) == PowerHelper.BatteryFlag.NoSystemBattery) {
+            if (_status.TrayIcon != "mdi-power-plug-battery-outline") {
+                _status.TrayIcon = "mdi-power-plug-battery-outline";
+                _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
                 _trayIcon.ToolTipText = sb.ToString();
             }
         } else {
-            var isAc = _powerState.AcDc == PowerHelper.PowerStates.AC;
-            var isCharging = (_powerState.BatteryFlag & PowerHelper.BatteryFlag.Charging) == PowerHelper.BatteryFlag.Charging;
-            var icon = _powerState.BatteryLifePercent switch
+            PowerHelper.GetSystemPowerStatus(_status.PowerState);
+            var isAc = _status.PowerState.AcDc == PowerHelper.PowerStates.AC;
+            var isCharging = (_status.PowerState.BatteryFlag & PowerHelper.BatteryFlag.Charging) == PowerHelper.BatteryFlag.Charging;
+            var icon = _status.PowerState.BatteryLifePercent switch
             {
                 100 => isAc ? "mdi-battery-charging-100" : "mdi-battery",
                 >= 90 => isAc ? "mdi-battery-charging-90" : "mdi-battery-90",
@@ -266,18 +273,18 @@ public class App : Application
                 _ => isAc ? "mdi-battery-charging-10" : "mdi-battery-10"
             };
 
-            if (!string.IsNullOrEmpty(icon) && icon != _lastIcon) {
-                _lastIcon = icon;
-                _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(icon));
+            if (!string.IsNullOrEmpty(icon) && icon != _status.TrayIcon) {
+                _status.TrayIcon = icon;
+                _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
             }
 
-            if (_powerState.BatteryLifeTime > 0) {
-                sb.AppendLine($"{(isCharging ? "Charging - " : string.Empty)}Remaining: {TimeSpan.FromSeconds(_powerState.BatteryLifeTime).ToString(@"hh\:mm")}");
+            if (_status.PowerState.BatteryLifeTime > 0) {
+                sb.AppendLine($"{(isCharging ? "Charging - " : string.Empty)}Remaining: {TimeSpan.FromSeconds(_status.PowerState.BatteryLifeTime).ToString(@"hh\:mm")}");
             } else if (isCharging) {
                 sb.AppendLine("Charging");
             }
 
-            sb.Append($"{_powerState.BatteryLifePercent}%");
+            sb.Append($"{_status.PowerState.BatteryLifePercent}%");
             _trayIcon.ToolTipText = sb.ToString();
         }
     }

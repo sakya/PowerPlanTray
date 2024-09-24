@@ -13,7 +13,13 @@ public static class PowerHelper
     private const uint ACCESS_INDIVIDUAL_SETTING = 18;
 
     public static Guid GUID_PROCESSOR_SETTINGS_SUBGROUP = new("54533251-82be-4824-96c1-47b60b740d00");
-    public static Guid GUID_TURBO_BOOST_SETTING = new("be337238-0d82-4146-a960-4f3749d470c7");
+    public static Guid GUID_BOOST_MODE_SETTING = new("be337238-0d82-4146-a960-4f3749d470c7");
+
+    public static Guid GUID_ACDC_POWER_SOURCE = new("5D3E9A59-E9D5-4B00-A6BD-FF34FF516548");
+    public static Guid GUID_ENERGY_SAVER_STATUS = new("550E8400-E29B-41D4-A716-446655440000");
+    public static Guid GUID_BATTERY_PERCENTAGE_REMAINING = new("A7AD8041-B45A-4CAE-87A3-EECBB468A9E1");
+    public static Guid GUID_POWER_SAVING_STATUS = new("E00958C0-C213-4ACE-AC77-FECCED2EEEA5");
+    public static Guid GUID_POWERSCHEME_PERSONALITY = new("245D8541-3943-4422-B025-13A784F679B7");
 
     public enum PowerStates
     {
@@ -54,6 +60,30 @@ public static class PowerHelper
                 ? PowerStates.AC
                 : PowerStates.DC;
     }
+
+    public enum DEVICE_PWR_NOTIFY
+    {
+        /// <summary>
+        /// The Recipient parameter is a handle to a service.Use the CreateService or OpenService function to obtain this handle.
+        /// </summary>
+        DEVICE_NOTIFY_SERVICE_HANDLE = 1,
+
+        /// <summary>The Recipient parameter is a pointer to a callback function to call when the power setting changes.</summary>
+        DEVICE_NOTIFY_CALLBACK = 2,
+    }
+
+    public struct DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS
+    {
+        /// <summary>Indicates the callback function that will be called when the application receives the notification.</summary>
+        [MarshalAs(UnmanagedType.FunctionPtr)]
+        public DeviceNotifyCallbackRoutine Callback;
+
+        /// <summary>The context of the application registering for the notification.</summary>
+        public IntPtr Context;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    public delegate uint DeviceNotifyCallbackRoutine(IntPtr context, uint type, IntPtr setting);
 
     #region dll import
     [DllImport("Kernel32.dll", EntryPoint = "GetSystemPowerStatus")]
@@ -193,7 +223,27 @@ public static class PowerHelper
         StringBuilder buffer,
         ref uint bufferSize
     );
+
+    [DllImport("powrprof.dll", CharSet = CharSet.Unicode, EntryPoint = "PowerSettingRegisterNotification")]
+    static extern uint PowerSettingRegisterNotification(
+        ref Guid powerSettingGuid,
+        DEVICE_PWR_NOTIFY flags,
+        DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS recipient,
+        out IntPtr registrationHandle);
     #endregion
+
+    public static bool RegisterNotification(Guid settingGuid, DeviceNotifyCallbackRoutine callback, out IntPtr handle)
+    {
+        var res = PowerSettingRegisterNotification(
+            ref settingGuid,
+            DEVICE_PWR_NOTIFY.DEVICE_NOTIFY_CALLBACK,
+            new DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS()
+            {
+                Callback = callback
+            },
+            out handle);
+        return res == 0;
+    }
 
     public static List<PowerScheme> GetPowerSchemes()
     {
@@ -234,18 +284,18 @@ public static class PowerHelper
         return tRes == 0;
     }
 
-    public static uint GetTurboBoostIndex(Guid schemaGuid, PowerStates powerState)
+    public static uint GetBoostModeIndex(Guid schemaGuid, PowerStates powerState)
     {
         if (powerState == PowerStates.AC)
-            return GetAcValue(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_TURBO_BOOST_SETTING);
-        return GetDcValue(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_TURBO_BOOST_SETTING);
+            return GetAcValue(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING);
+        return GetDcValue(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING);
     }
 
-    public static bool SetTurboBoostIndex(Guid schemaGuid, PowerStates powerState, uint index)
+    public static bool SetBoostModeIndex(Guid schemaGuid, PowerStates powerState, uint index)
     {
         if (powerState == PowerStates.AC)
-            return SetAcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_TURBO_BOOST_SETTING, index);
-        return SetDcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_TURBO_BOOST_SETTING, index);
+            return SetAcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index);
+        return SetDcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index);
     }
 
     public static List<GuidName> Enumerate(Guid schemaGuid, Guid subgroupGuid)
