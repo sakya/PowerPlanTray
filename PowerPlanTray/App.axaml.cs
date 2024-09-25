@@ -308,9 +308,9 @@ public class App : Application
                 sb.Append("Discharging");
 
             if (_status.BatteryInfo.ChargingTime != TimeSpan.Zero) {
-                sb.AppendLine($" - Remaining: {_status.BatteryInfo.ChargingTime.ToString(@"hh\:mm")}");
+                sb.Append($" - Remaining: {_status.BatteryInfo.ChargingTime.ToString(@"hh\:mm")}");
             } else if (_status.BatteryInfo.RemainingTime != TimeSpan.Zero) {
-                sb.AppendLine($" - Remaining: {_status.BatteryInfo.RemainingTime.ToString(@"hh\:mm")}");
+                sb.Append($" - Remaining: {_status.BatteryInfo.RemainingTime.ToString(@"hh\:mm")}");
             } else if (!isAc && !isCharging) {
                 // Estimate remaining time
                 if (_lastBatteryRemainingCapacityTime != null) {
@@ -318,7 +318,7 @@ public class App : Application
                     var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) / passedTime.TotalSeconds;
                     if (capacityLoss > 0) {
                         var secondsLeft = _status.BatteryInfo.RemainingCapacity / capacityLoss;
-                        sb.AppendLine($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
+                        sb.Append($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
                     }
                 }
             }

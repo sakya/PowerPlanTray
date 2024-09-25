@@ -31,6 +31,10 @@ class Program
 
         return AppBuilder.Configure<App>()
             .UsePlatformDetect()
+            .With(new Win32PlatformOptions
+            {
+                RenderingMode = [Win32RenderingMode.Software] // For some reason uses less memory
+            })
             .LogToTrace();
     }
 
