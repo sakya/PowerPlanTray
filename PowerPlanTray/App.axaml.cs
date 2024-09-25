@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -18,9 +19,13 @@ public class App : Application
     public CancellationTokenSource CancellationTokenSource { get; } = new();
     private TrayIcon _trayIcon = null!;
 
-    private readonly Status _status = new Status();
+    private readonly Status _status = new();
 
     private PowerHelper.DeviceNotifyCallbackRoutine _registerNotification = null!;
+    private readonly List<IntPtr> _registerNotificationHandles = [];
+
+    private DateTime? _lastBatteryRemainingCapacityTime;
+    private uint _lastBatteryRemainingCapacity;
 
     public override void Initialize()
     {
@@ -48,14 +53,23 @@ public class App : Application
         _trayIcon.Menu = BuildMenu();
         TrayIcon.SetIcons(this, [_trayIcon]);
 
-        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ACDC_POWER_SOURCE, _registerNotification, out _))
+        IntPtr ptr;
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ACDC_POWER_SOURCE, _registerNotification, out ptr))
             Console.WriteLine("Error registering notification for GUID_ACDC_POWER_SOURCE");
-        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ENERGY_SAVER_STATUS, _registerNotification, out _))
+        if (ptr != IntPtr.Zero)
+            _registerNotificationHandles.Add(ptr);
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ENERGY_SAVER_STATUS, _registerNotification, out ptr))
             Console.WriteLine("Error registering notification for GUID_ENERGY_SAVER_STATUS");
-        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_POWERSCHEME_PERSONALITY, _registerNotification, out _))
+        if (ptr != IntPtr.Zero)
+            _registerNotificationHandles.Add(ptr);
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_POWERSCHEME_PERSONALITY, _registerNotification, out ptr))
             Console.WriteLine("Error registering notification for GUID_POWERSCHEME_PERSONALITY");
-        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_BOOST_MODE_SETTING, _registerNotification, out _))
+        if (ptr != IntPtr.Zero)
+            _registerNotificationHandles.Add(ptr);
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_BOOST_MODE_SETTING, _registerNotification, out ptr))
             Console.WriteLine("Error registering notification for GUID_BOOST_MODE_SETTING");
+        if (ptr != IntPtr.Zero)
+            _registerNotificationHandles.Add(ptr);
 
         DispatcherTimer.Run(() =>
         {
@@ -75,6 +89,10 @@ public class App : Application
                 if (!string.IsNullOrEmpty(ex.StackTrace))
                     Console.WriteLine($"{ex.StackTrace}");
                 dEx = ex.InnerException;
+            }
+        } finally {
+            foreach (var ptr in _registerNotificationHandles) {
+                PowerHelper.UnregisterNotification(ptr);
             }
         }
     } // Run
@@ -208,6 +226,8 @@ public class App : Application
         var guid = Marshal.PtrToStructure<Guid>(setting);
         if (guid == PowerHelper.GUID_ACDC_POWER_SOURCE || guid == PowerHelper.GUID_ENERGY_SAVER_STATUS) {
             PowerHelper.GetSystemPowerStatus(_status.PowerState);
+            _lastBatteryRemainingCapacityTime = null;
+            _lastBatteryRemainingCapacity = 0;
         } else if (guid == PowerHelper.GUID_POWERSCHEME_PERSONALITY) {
             var active = PowerHelper.GetActiveSchemeGuid();
             if (active != _status.ActiveSchemeGuid) {
@@ -278,14 +298,39 @@ public class App : Application
                 _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
             }
 
-            if (_status.PowerState.BatteryLifeTime > 0) {
-                sb.AppendLine($"{(isCharging ? "Charging - " : string.Empty)}Remaining: {TimeSpan.FromSeconds(_status.PowerState.BatteryLifeTime).ToString(@"hh\:mm")}");
-            } else if (isCharging) {
-                sb.AppendLine("Charging");
+            BatteryHelper.GetInfo(_status.BatteryInfo);
+            sb.Append($"Battery info: {_status.PowerState.BatteryLifePercent}% (");
+            if (isCharging)
+                sb.Append("Charging");
+            else if (isAc)
+                sb.Append("Plugged in");
+            else
+                sb.Append("Discharging");
+
+            if (_status.BatteryInfo.ChargingTime != TimeSpan.Zero) {
+                sb.AppendLine($" - Remaining: {_status.BatteryInfo.ChargingTime.ToString(@"hh\:mm")}");
+            } else if (_status.BatteryInfo.RemainingTime != TimeSpan.Zero) {
+                sb.AppendLine($" - Remaining: {_status.BatteryInfo.RemainingTime.ToString(@"hh\:mm")}");
+            } else if (!isAc && !isCharging) {
+                // Estimate remaining time
+                if (_lastBatteryRemainingCapacityTime != null) {
+                    var passedTime = DateTime.UtcNow - _lastBatteryRemainingCapacityTime.Value;
+                    var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) / passedTime.TotalSeconds;
+                    if (capacityLoss > 0) {
+                        var secondsLeft = _status.BatteryInfo.RemainingCapacity / capacityLoss;
+                        sb.AppendLine($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
+                    }
+                }
             }
 
-            sb.Append($"{_status.PowerState.BatteryLifePercent}%");
+            sb.Append(')');
+
             _trayIcon.ToolTipText = sb.ToString();
+
+            if (_lastBatteryRemainingCapacityTime == null) {
+                _lastBatteryRemainingCapacity = _status.BatteryInfo.RemainingCapacity;
+                _lastBatteryRemainingCapacityTime = DateTime.UtcNow;
+            }
         }
     }
 }

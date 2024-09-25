@@ -230,10 +230,15 @@ public static class PowerHelper
         DEVICE_PWR_NOTIFY flags,
         DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS recipient,
         out IntPtr registrationHandle);
+
+    [DllImport("powrprof.dll", CharSet = CharSet.Unicode, EntryPoint = "PowerSettingUnregisterNotification")]
+    static extern uint PowerSettingUnregisterNotification(
+        IntPtr registrationHandle);
     #endregion
 
     public static bool RegisterNotification(Guid settingGuid, DeviceNotifyCallbackRoutine callback, out IntPtr handle)
     {
+        handle = IntPtr.Zero;
         var res = PowerSettingRegisterNotification(
             ref settingGuid,
             DEVICE_PWR_NOTIFY.DEVICE_NOTIFY_CALLBACK,
@@ -243,6 +248,11 @@ public static class PowerHelper
             },
             out handle);
         return res == 0;
+    }
+
+    public static bool UnregisterNotification(IntPtr handle)
+    {
+        return PowerSettingUnregisterNotification(handle) == 0;
     }
 
     public static List<PowerScheme> GetPowerSchemes()

@@ -28,4 +28,5 @@ public class Status
 
     public List<IdName>? BoostModeValues;
     public uint? BoostModeIndex { get; set; }
+    public BatteryHelper.BatteryInfo BatteryInfo { get; set; } = new();
 }
