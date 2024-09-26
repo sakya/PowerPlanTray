@@ -34,6 +34,8 @@ public class App : Application
 
     public void Init()
     {
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 16299))
+            EfficiencyModeHelper.SetEfficiencyMode(true);
         _registerNotification = OnSettingChange;
 
         _status.Theme = ActualThemeVariant;
