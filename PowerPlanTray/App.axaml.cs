@@ -335,10 +335,10 @@ public class App : Application
             } else if (!isAc && !isCharging) {
                 // Estimate remaining time
                 if (_lastBatteryRemainingCapacityTime != null) {
-                    var passedTime = DateTime.UtcNow - _lastBatteryRemainingCapacityTime.Value;
-                    if (passedTime.TotalMinutes >= 5) {
+                    var timeDiff = DateTime.UtcNow - _lastBatteryRemainingCapacityTime.Value;
+                    if (timeDiff.TotalMinutes >= 5) {
                         var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) /
-                                           passedTime.TotalSeconds;
+                                           timeDiff.TotalSeconds;
                         if (capacityLoss > 0) {
                             var secondsLeft = _status.BatteryInfo.RemainingCapacity / capacityLoss;
                             sb.Append($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
