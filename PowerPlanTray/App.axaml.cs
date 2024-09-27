@@ -336,10 +336,13 @@ public class App : Application
                 // Estimate remaining time
                 if (_lastBatteryRemainingCapacityTime != null) {
                     var passedTime = DateTime.UtcNow - _lastBatteryRemainingCapacityTime.Value;
-                    var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) / passedTime.TotalSeconds;
-                    if (capacityLoss > 0) {
-                        var secondsLeft = _status.BatteryInfo.RemainingCapacity / capacityLoss;
-                        sb.Append($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
+                    if (passedTime.TotalMinutes >= 5) {
+                        var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) /
+                                           passedTime.TotalSeconds;
+                        if (capacityLoss > 0) {
+                            var secondsLeft = _status.BatteryInfo.RemainingCapacity / capacityLoss;
+                            sb.Append($" - Remaining: {TimeSpan.FromSeconds(secondsLeft).ToString(@"hh\:mm")}");
+                        }
                     }
                 }
             }
