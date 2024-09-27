@@ -24,6 +24,7 @@ public class App : Application
     private PowerHelper.DeviceNotifyCallbackRoutine _registerNotification = null!;
     private PowerHelper.DeviceNotifyCallbackRoutine _registerSuspendResumeNotification = null!;
     private readonly List<IntPtr> _registerNotificationHandles = [];
+    private readonly HashSet<IntPtr> _registerNotificationFirstCall = new();
     private IntPtr _registerSuspendResumeNotificationHandles;
 
     private DateTime? _lastBatteryRemainingCapacityTime;
@@ -53,6 +54,8 @@ public class App : Application
             ? PowerHelper.GetBoostModeIndex(_status.ActiveSchemeGuid, _status.PowerState.AcDc)
             : 0;
 
+        PowerHelper.GetSystemPowerStatus(_status.PowerState);
+
         _trayIcon = new TrayIcon();
         _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
         _trayIcon.ToolTipText = "Power Plan Tray";
@@ -63,6 +66,10 @@ public class App : Application
             Console.WriteLine("Error registering notification for Suspend/Resume");
 
         IntPtr ptr;
+        if (!PowerHelper.RegisterNotification(PowerHelper.GUID_BATTERY_PERCENTAGE_REMAINING, _registerNotification, out ptr))
+            Console.WriteLine("Error registering notification for GUID_BATTERY_PERCENTAGE_REMAINING");
+        if (ptr != IntPtr.Zero)
+            _registerNotificationHandles.Add(ptr);
         if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ACDC_POWER_SOURCE, _registerNotification, out ptr))
             Console.WriteLine("Error registering notification for GUID_ACDC_POWER_SOURCE");
         if (ptr != IntPtr.Zero)
@@ -108,6 +115,36 @@ public class App : Application
             }
         }
     } // Run
+
+    #region menu item clicks
+    private void OnSchemeClick(object? sender, EventArgs e)
+    {
+        if (sender is CheckableMenuItem { Tag: PowerScheme scheme }) {
+            PowerHelper.ActivateScheme(scheme.Guid);
+        }
+    }
+
+    private void OnBoostModeClick(object? sender, EventArgs e)
+    {
+        if (sender is CheckableMenuItem { Tag: uint index }) {
+            var schemeGuid = PowerHelper.GetActiveSchemeGuid();
+            if (PowerHelper.SetBoostModeIndex(schemeGuid, _status.PowerState.AcDc, index))
+                UpdateBoostModeMenu(index);
+        }
+    }
+
+    private void OnAutoStartClick(object? sender, EventArgs e)
+    {
+        if (sender is CheckableMenuItem menuItem) {
+            AutoStartHelper.SetEnabled(menuItem.IsChecked);
+        }
+    }
+
+    private void OnQuitClick(object? sender, EventArgs e)
+    {
+        CancellationTokenSource.Cancel();
+    }
+    #endregion
 
     #region private operations
     private NativeMenu BuildMenu()
@@ -201,40 +238,12 @@ public class App : Application
             }
         }
     }
-    #endregion
-
-    #region menu item clicks
-    private void OnSchemeClick(object? sender, EventArgs e)
-    {
-        if (sender is CheckableMenuItem { Tag: PowerScheme scheme }) {
-            PowerHelper.ActivateScheme(scheme.Guid);
-        }
-    }
-
-    private void OnBoostModeClick(object? sender, EventArgs e)
-    {
-        if (sender is CheckableMenuItem { Tag: uint index }) {
-            var schemeGuid = PowerHelper.GetActiveSchemeGuid();
-            if (PowerHelper.SetBoostModeIndex(schemeGuid, _status.PowerState.AcDc, index))
-                UpdateBoostModeMenu(index);
-        }
-    }
-
-    private void OnAutoStartClick(object? sender, EventArgs e)
-    {
-        if (sender is CheckableMenuItem menuItem) {
-            AutoStartHelper.SetEnabled(menuItem.IsChecked);
-        }
-    }
-
-    private void OnQuitClick(object? sender, EventArgs e)
-    {
-        CancellationTokenSource.Cancel();
-    }
-    #endregion
 
     private uint OnSettingChange(IntPtr context, uint type, IntPtr setting)
     {
+        if (_registerNotificationFirstCall.Add(setting))
+            return 0;
+
         var guid = Marshal.PtrToStructure<Guid>(setting);
         if (guid == PowerHelper.GUID_ACDC_POWER_SOURCE || guid == PowerHelper.GUID_ENERGY_SAVER_STATUS) {
             PowerHelper.GetSystemPowerStatus(_status.PowerState);
@@ -253,6 +262,8 @@ public class App : Application
                 _status.BoostModeIndex = boostModeIndex;
                 Dispatcher.UIThread.Invoke(() => UpdateBoostModeMenu(boostModeIndex));
             }
+        } else if (guid == PowerHelper.GUID_BATTERY_PERCENTAGE_REMAINING) {
+            PowerHelper.GetSystemPowerStatus(_status.PowerState);
         }
 
         return 0;
@@ -297,7 +308,6 @@ public class App : Application
                 _trayIcon.ToolTipText = sb.ToString();
             }
         } else {
-            PowerHelper.GetSystemPowerStatus(_status.PowerState);
             var isAc = _status.PowerState.AcDc == PowerHelper.PowerStates.AC;
             var isCharging = (_status.PowerState.BatteryFlag & PowerHelper.BatteryFlag.Charging) == PowerHelper.BatteryFlag.Charging;
             var icon = _status.PowerState.BatteryLifePercent switch
@@ -319,7 +329,11 @@ public class App : Application
                 _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
             }
 
-            BatteryHelper.GetInfo(_status.BatteryInfo);
+            if (_status.BatteryInfoTime == null || DateTime.UtcNow - _status.BatteryInfoTime.Value >= TimeSpan.FromSeconds(5)) {
+                BatteryHelper.GetInfo(_status.BatteryInfo);
+                _status.BatteryInfoTime = DateTime.UtcNow;
+            }
+
             sb.Append($"Battery info: {_status.PowerState.BatteryLifePercent}% (");
             if (isCharging)
                 sb.Append("Charging");
@@ -328,15 +342,15 @@ public class App : Application
             else
                 sb.Append("Discharging");
 
-            if (_status.BatteryInfo.ChargingTime != TimeSpan.Zero) {
+            if (isCharging && _status.BatteryInfo.ChargingTime != TimeSpan.Zero) {
                 sb.Append($" - Remaining: {_status.BatteryInfo.ChargingTime.ToString(@"hh\:mm")}");
-            } else if (_status.BatteryInfo.RemainingTime != TimeSpan.Zero) {
+            } else if (!isAc && !isCharging && _status.BatteryInfo.RemainingTime != TimeSpan.Zero) {
                 sb.Append($" - Remaining: {_status.BatteryInfo.RemainingTime.ToString(@"hh\:mm")}");
             } else if (!isAc && !isCharging) {
                 // Estimate remaining time
                 if (_lastBatteryRemainingCapacityTime != null) {
                     var timeDiff = DateTime.UtcNow - _lastBatteryRemainingCapacityTime.Value;
-                    if (timeDiff.TotalMinutes >= 5) {
+                    if (timeDiff.TotalMinutes >= 3) {
                         var capacityLoss = (_lastBatteryRemainingCapacity - _status.BatteryInfo.RemainingCapacity) /
                                            timeDiff.TotalSeconds;
                         if (capacityLoss > 0) {
@@ -357,4 +371,5 @@ public class App : Application
             }
         }
     }
+    #endregion
 }
