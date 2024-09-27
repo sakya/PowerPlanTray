@@ -22,7 +22,9 @@ public class App : Application
     private readonly Status _status = new();
 
     private PowerHelper.DeviceNotifyCallbackRoutine _registerNotification = null!;
+    private PowerHelper.DeviceNotifyCallbackRoutine _registerSuspendResumeNotification = null!;
     private readonly List<IntPtr> _registerNotificationHandles = [];
+    private IntPtr _registerSuspendResumeNotificationHandles;
 
     private DateTime? _lastBatteryRemainingCapacityTime;
     private uint _lastBatteryRemainingCapacity;
@@ -36,7 +38,9 @@ public class App : Application
     {
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 16299))
             EfficiencyModeHelper.SetEfficiencyMode(true);
+
         _registerNotification = OnSettingChange;
+        _registerSuspendResumeNotification = OnSuspendResumeChange;
 
         _status.Theme = ActualThemeVariant;
         _status.TrayIcon = "mdi-power-plug-battery-outline";
@@ -54,6 +58,9 @@ public class App : Application
         _trayIcon.ToolTipText = "Power Plan Tray";
         _trayIcon.Menu = BuildMenu();
         TrayIcon.SetIcons(this, [_trayIcon]);
+
+        if (!PowerHelper.RegisterSuspendResumeNotification(_registerSuspendResumeNotification, out _registerSuspendResumeNotificationHandles))
+            Console.WriteLine("Error registering notification for Suspend/Resume");
 
         IntPtr ptr;
         if (!PowerHelper.RegisterNotification(PowerHelper.GUID_ACDC_POWER_SOURCE, _registerNotification, out ptr))
@@ -93,6 +100,9 @@ public class App : Application
                 dEx = ex.InnerException;
             }
         } finally {
+            if (_registerSuspendResumeNotificationHandles != IntPtr.Zero)
+                PowerHelper.UnregisterSuspendResumeNotification(_registerSuspendResumeNotificationHandles);
+
             foreach (var ptr in _registerNotificationHandles) {
                 PowerHelper.UnregisterNotification(ptr);
             }
@@ -245,6 +255,15 @@ public class App : Application
             }
         }
 
+        return 0;
+    }
+
+    private uint OnSuspendResumeChange(IntPtr context, uint type, IntPtr setting)
+    {
+        if (type == PowerHelper.PBT_APMRESUMESUSPEND || type == PowerHelper.PBT_APMRESUMEAUTOMATIC) {
+            _lastBatteryRemainingCapacityTime = null;
+            _lastBatteryRemainingCapacity = 0;
+        }
         return 0;
     }
 

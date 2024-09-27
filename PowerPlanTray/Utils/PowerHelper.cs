@@ -12,6 +12,10 @@ public static class PowerHelper
     private const uint ACCESS_SUBGROUP = 17;
     private const uint ACCESS_INDIVIDUAL_SETTING = 18;
 
+    public static uint PBT_APMSUSPEND = 4;
+    public static uint PBT_APMRESUMESUSPEND = 7;
+    public static uint PBT_APMRESUMEAUTOMATIC = 18;
+
     public static Guid GUID_PROCESSOR_SETTINGS_SUBGROUP = new("54533251-82be-4824-96c1-47b60b740d00");
     public static Guid GUID_BOOST_MODE_SETTING = new("be337238-0d82-4146-a960-4f3749d470c7");
 
@@ -234,6 +238,16 @@ public static class PowerHelper
     [DllImport("powrprof.dll", CharSet = CharSet.Unicode, EntryPoint = "PowerSettingUnregisterNotification")]
     static extern uint PowerSettingUnregisterNotification(
         IntPtr registrationHandle);
+
+    [DllImport("powrprof.dll", CharSet = CharSet.Unicode, EntryPoint = "PowerRegisterSuspendResumeNotification")]
+    static extern uint PowerRegisterSuspendResumeNotification(
+        DEVICE_PWR_NOTIFY flags,
+        DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS recipient,
+        out IntPtr registrationHandle);
+
+    [DllImport("powrprof.dll", CharSet = CharSet.Unicode, EntryPoint = "PowerUnregisterSuspendResumeNotification")]
+    static extern uint PowerUnregisterSuspendResumeNotification(
+        IntPtr registrationHandle);
     #endregion
 
     public static bool RegisterNotification(Guid settingGuid, DeviceNotifyCallbackRoutine callback, out IntPtr handle)
@@ -253,6 +267,24 @@ public static class PowerHelper
     public static bool UnregisterNotification(IntPtr handle)
     {
         return PowerSettingUnregisterNotification(handle) == 0;
+    }
+
+    public static bool RegisterSuspendResumeNotification(DeviceNotifyCallbackRoutine callback, out IntPtr handle)
+    {
+        handle = IntPtr.Zero;
+        var res = PowerRegisterSuspendResumeNotification(
+            DEVICE_PWR_NOTIFY.DEVICE_NOTIFY_CALLBACK,
+            new DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS()
+            {
+                Callback = callback
+            },
+            out handle);
+        return res == 0;
+    }
+
+    public static bool UnregisterSuspendResumeNotification(IntPtr handle)
+    {
+        return PowerUnregisterSuspendResumeNotification(handle) == 0;
     }
 
     public static List<PowerScheme> GetPowerSchemes()

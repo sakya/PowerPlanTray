@@ -109,7 +109,7 @@ public static class EfficiencyModeHelper
     private const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 1U;
 
     [SupportedOSPlatform("windows10.0.16299.0")]
-    public static unsafe void SetProcessQualityOfServiceLevel(QualityOfServiceLevel level)
+    private static unsafe void SetProcessQualityOfServiceLevel(QualityOfServiceLevel level)
     {
         var powerThrottling = new PROCESS_POWER_THROTTLING_STATE
         {
@@ -156,7 +156,7 @@ public static class EfficiencyModeHelper
     /// Based on <see href="https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass"/>
     /// </summary>
     [SupportedOSPlatform("windows5.1.2600")]
-    public static unsafe void SetProcessPriorityClass(ProcessPriorityClass priorityClass)
+    private static unsafe void SetProcessPriorityClass(ProcessPriorityClass priorityClass)
     {
         var flags = priorityClass switch
         {
