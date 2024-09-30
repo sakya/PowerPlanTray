@@ -49,12 +49,11 @@ public class App : Application
         _status.Schemes = PowerHelper.GetPowerSchemes();
         _status.ActiveSchemeGuid = PowerHelper.GetActiveSchemeGuid();
 
+        PowerHelper.GetSystemPowerStatus(_status.PowerState);
         _status.BoostModeValues = PowerHelper.GetPossibleValues(PowerHelper.GUID_PROCESSOR_SETTINGS_SUBGROUP, PowerHelper.GUID_BOOST_MODE_SETTING);
         _status.BoostModeIndex = _status.ActiveScheme != null
             ? PowerHelper.GetBoostModeIndex(_status.ActiveSchemeGuid, _status.PowerState.AcDc)
             : 0;
-
-        PowerHelper.GetSystemPowerStatus(_status.PowerState);
 
         _trayIcon = new TrayIcon();
         _trayIcon.Icon = new WindowIcon(MaterialIconsHelper.GetBitmap(_status.TrayIcon));
