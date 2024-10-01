@@ -24,7 +24,7 @@ public class App : Application
     private PowerHelper.DeviceNotifyCallbackRoutine _registerNotification = null!;
     private PowerHelper.DeviceNotifyCallbackRoutine _registerSuspendResumeNotification = null!;
     private readonly List<IntPtr> _registerNotificationHandles = [];
-    private readonly HashSet<IntPtr> _registerNotificationFirstCall = new();
+    private readonly HashSet<Guid> _registerNotificationFirstCall = [];
     private IntPtr _registerSuspendResumeNotificationHandles;
 
     private DateTime? _lastBatteryRemainingCapacityTime;
@@ -50,6 +50,9 @@ public class App : Application
         _status.ActiveSchemeGuid = PowerHelper.GetActiveSchemeGuid();
 
         PowerHelper.GetSystemPowerStatus(_status.PowerState);
+        BatteryHelper.GetInfo(_status.BatteryInfo);
+        _status.BatteryInfoTime = DateTime.UtcNow;
+
         _status.BoostModeValues = PowerHelper.GetPossibleValues(PowerHelper.GUID_PROCESSOR_SETTINGS_SUBGROUP, PowerHelper.GUID_BOOST_MODE_SETTING);
         _status.BoostModeIndex = _status.ActiveScheme != null
             ? PowerHelper.GetBoostModeIndex(_status.ActiveSchemeGuid, _status.PowerState.AcDc)
@@ -190,7 +193,7 @@ public class App : Application
         var mi = new NativeMenuItem
         {
             Header = "Settings",
-            Menu = new NativeMenu(),
+            Menu = [],
             Icon = MaterialIconsHelper.GetBitmap("mdi-cogs")
         };
         var smi = new CheckableMenuItem()
@@ -240,10 +243,10 @@ public class App : Application
 
     private uint OnSettingChange(IntPtr context, uint type, IntPtr setting)
     {
-        if (_registerNotificationFirstCall.Add(setting))
+        var guid = Marshal.PtrToStructure<Guid>(setting);
+        if (_registerNotificationFirstCall.Add(guid))
             return 0;
 
-        var guid = Marshal.PtrToStructure<Guid>(setting);
         if (guid == PowerHelper.GUID_ACDC_POWER_SOURCE || guid == PowerHelper.GUID_ENERGY_SAVER_STATUS) {
             PowerHelper.GetSystemPowerStatus(_status.PowerState);
             _lastBatteryRemainingCapacityTime = null;
