@@ -335,9 +335,13 @@ public static class PowerHelper
 
     public static bool SetBoostModeIndex(Guid schemaGuid, PowerStates powerState, uint index)
     {
-        if (powerState == PowerStates.AC)
-            return SetAcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index);
-        return SetDcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index);
+        var res = powerState == PowerStates.AC ?
+            SetAcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index) :
+            SetDcValueIndex(schemaGuid, GUID_PROCESSOR_SETTINGS_SUBGROUP, GUID_BOOST_MODE_SETTING, index);
+
+        if (res)
+            ActivateScheme(schemaGuid);
+        return res;
     }
 
     public static List<GuidName> Enumerate(Guid schemaGuid, Guid subgroupGuid)
@@ -494,20 +498,7 @@ public static class PowerHelper
 
     private static bool SetAcValueIndex(Guid schemaGuid, Guid subGroupGuid, Guid settingGuid, uint value)
     {
-        var schemePtr = Marshal.AllocHGlobal(Marshal.SizeOf(schemaGuid));
-        Marshal.StructureToPtr(schemaGuid, schemePtr, false);
-
-        var subGroupGuidPtr = Marshal.AllocHGlobal(Marshal.SizeOf(subGroupGuid));
-        Marshal.StructureToPtr(subGroupGuid, subGroupGuidPtr, false);
-
-        var settingGuidPtr = Marshal.AllocHGlobal(Marshal.SizeOf(settingGuid));
-        Marshal.StructureToPtr(settingGuid, settingGuidPtr, false);
-
         var tRes = PowerWriteACValueIndex(IntPtr.Zero, ref schemaGuid, ref subGroupGuid, ref settingGuid, value);
-
-        Marshal.FreeHGlobal(schemePtr);
-        Marshal.FreeHGlobal(subGroupGuidPtr);
-        Marshal.FreeHGlobal(settingGuidPtr);
         return tRes == 0;
     }
 
